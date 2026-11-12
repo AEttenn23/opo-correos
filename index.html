@@ -122,6 +122,8 @@ textarea{width:100%;min-height:90px;font-size:13px}
 @media (max-width:420px){.quick{grid-template-columns:1fr}.hero{grid-template-columns:1fr;justify-items:center}.hero .kpis{width:100%}}
 .banner{border:1.5px solid var(--acc);background:var(--acc-s);border-radius:var(--r);padding:12px 14px;font-size:14.5px}
 .banner .row{margin-top:8px}
+.banner.warn{border-color:var(--ko);background:var(--ko-s)}
+.banner+.banner{margin-top:10px}
 /* plan */
 .legend{display:flex;gap:8px;flex-wrap:wrap}
 .wk{margin-top:14px}
@@ -277,12 +279,31 @@ const DIA=['dom','lun','mar','mié','jue','vie','sáb'];
 const fmt=s=>{const d=parse(s);return d.getDate()+' '+MES[d.getMonth()]};
 const fmtL=s=>{const d=parse(s);return DIA[d.getDay()]+' '+d.getDate()+' '+MES[d.getMonth()]};
 /* ---------- estado ---------- */
-function blank(){return{v:1,updatedAt:0,examDate:'2027-01-17',examConfirmed:false,read:{},claves:{},q:{},days:{},tests:[],best:{},xp:0,done:{},freezes:0,frozen:{},freezeAward:{},badges:{},sims:[],bestStreak:0,processedTo:addD(START,-1),clavesAll:null}}
+function blank(){return{v:1,updatedAt:0,examDate:'2027-01-17',examConfirmed:false,read:{},claves:{},q:{},days:{},tests:[],best:{},xp:0,done:{},freezes:0,frozen:{},freezeAward:{},badges:{},sims:[],bestStreak:0,processedTo:addD(START,-1),clavesAll:null,lastBackup:null}}
 function norm(s){const b=blank();for(const k in b) if(s[k]===undefined) s[k]=b[k];return s}
 let S;
 try{S=norm(JSON.parse(localStorage.getItem('opoCorreos')||'null')||blank())}catch(e){S=blank()}
+/* almacenamiento local robusto: localStorage + copia espejo en IndexedDB */
+const STORE_OK=(()=>{try{localStorage.setItem('__t','1');const ok=localStorage.getItem('__t')==='1';localStorage.removeItem('__t');return ok}catch(e){return false}})();
+const UA=navigator.userAgent||'';
+const INAPP=/WhatsApp|FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|TikTok|Snapchat|; wv\)/i.test(UA);
+const STANDALONE=typeof window.claude==='undefined';
+const IOS=/iPhone|iPad|iPod/i.test(UA);
+const IDB={db:null,
+  open(){return new Promise(res=>{try{const r=indexedDB.open('opoCorreos',1);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onsuccess=()=>{IDB.db=r.result;res(r.result)};r.onerror=()=>res(null)}catch(e){res(null)}})},
+  async get(){const db=IDB.db||await IDB.open();if(!db)return null;return new Promise(res=>{try{const q=db.transaction('kv').objectStore('kv').get('state');q.onsuccess=()=>res(q.result||null);q.onerror=()=>res(null)}catch(e){res(null)}})},
+  async set(v){const db=IDB.db||await IDB.open();if(!db)return;try{db.transaction('kv','readwrite').objectStore('kv').put(v,'state')}catch(e){}}
+};
+let idbTimer=null,persistAsked=false,lastSaved=null;
+async function restoreFromIDB(){
+  try{const raw=await IDB.get();if(!raw)return;const x=JSON.parse(raw);
+    if((x.updatedAt||0)>(S.updatedAt||0)){S=norm(x);try{localStorage.setItem('opoCorreos',raw)}catch(e){}rebuild();route();toast('Progreso recuperado')}
+  }catch(e){}
+}
 let DBREF=null,syncMode='local',saveTimer=null,writing=false,dirty=false;
-function save(){S.updatedAt=Date.now();try{localStorage.setItem('opoCorreos',JSON.stringify(S))}catch(e){}
+function save(){S.updatedAt=Date.now();const js=JSON.stringify(S);try{localStorage.setItem('opoCorreos',js)}catch(e){}lastSaved=new Date();
+  clearTimeout(idbTimer);idbTimer=setTimeout(()=>IDB.set(JSON.stringify(S)),400);
+  if(!persistAsked&&navigator.storage&&navigator.storage.persist){persistAsked=true;navigator.storage.persist().catch(()=>{})}
   if(DBREF){dirty=true;clearTimeout(saveTimer);saveTimer=setTimeout(flush,1500)}}
 async function flush(){if(!DBREF||writing||!dirty)return;writing=true;dirty=false;
   try{await DBREF.set({json:JSON.stringify(S),updatedAt:S.updatedAt});syncMode='cloud'}catch(e){syncMode='local';if(e&&e.code==='unavailable')dirty=true}
@@ -305,7 +326,22 @@ async function initSync(){
   }catch(e){syncMode='local';paintSync()}
 }
 function paintSync(){const el=document.getElementById('syncnote');if(el)el.textContent=syncText()}
-function syncText(){return syncMode==='cloud'?'Progreso guardado en tu cuenta: lo verás en el móvil y en el ordenador.':'Progreso guardado solo en este navegador. Usa «Copiar copia de seguridad» de vez en cuando.'}
+function syncText(){if(syncMode==='cloud')return 'Progreso guardado en tu cuenta: lo verás en el móvil y en el ordenador.';
+  if(!STORE_OK)return 'Este navegador no permite guardar datos (modo incógnito o navegador de otra app). Abre la web en Chrome o Safari normal.';
+  const t=lastSaved?(' Último guardado: '+pad(lastSaved.getHours())+':'+pad(lastSaved.getMinutes())+'.'):'';
+  return 'Progreso guardado en este navegador y en este dispositivo.'+t+' Si cambias de móvil o borras los datos del navegador se pierde: descarga una copia de vez en cuando.'}
+function storageBanner(){
+  if(syncMode==='cloud')return '';
+  if(!STORE_OK)return `<div class="banner warn"><b>Tu progreso no se está guardando.</b> Este navegador bloquea el guardado (modo incógnito o navegador dentro de otra app). Abre el enlace en Chrome o Safari normal.<div class="row"><button class="btn sm" data-copylink="1">Copiar enlace</button></div></div>`;
+  if(INAPP)return `<div class="banner warn"><b>Estás dentro del navegador de otra app</b> (WhatsApp, Instagram…). Ahí el progreso puede borrarse al cerrarla. Toca el menú ⋮ o el botón de compartir y elige <b>Abrir en Chrome</b> o <b>Abrir en Safari</b>.<div class="row"><button class="btn sm" data-copylink="1">Copiar enlace</button></div></div>`;
+  const has=Object.keys(S.done).length+Object.keys(S.q).length>0;
+  if(STANDALONE&&has&&(!S.lastBackup||diff(S.lastBackup,today())>=7))return `<div class="banner"><b>Haz una copia de tu progreso.</b> Se guarda en este móvil; con una copia no lo pierdes si cambias de móvil o borras los datos del navegador.<div class="row"><button class="btn sm" data-dlbackup="1">Descargar copia</button></div></div>`;
+  return '';
+}
+function downloadBackup(){
+  try{const b=new Blob([JSON.stringify(S)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='opo-correos-progreso-'+today()+'.json';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);S.lastBackup=today();save();toast('Copia descargada');rerender()}catch(e){toast('No se pudo descargar la copia')}
+}
+function loadBackupFile(f){const r=new FileReader();r.onload=()=>{try{S=norm(JSON.parse(r.result));S.updatedAt=0;rebuild();save();toast('Progreso restaurado');go('hoy')}catch(e){toast('Ese archivo no es una copia válida')}};r.readAsText(f)}
 /* ---------- plan ---------- */
 function T(kind,o={}){const t={kind,...o};
   t.id=({read:'read-'+o.l,test1:'test1-'+o.l,test80:'test80-'+o.l,fallosS:'fallosS-'+o.l,claves:'claves-'+o.l,cons:'cons-'+o.l,simB:'simB-'+o.b,diag:'diag',smart:'smart-'+o.x}[kind])||kind+'-'+o.x;
@@ -554,6 +590,8 @@ app.addEventListener('click',e=>{
   const ns=e.target.closest('[data-nsave]');if(ns){const id=ns.dataset.nsave;const v=document.getElementById('nv-'+id).value.trim();if(v===''){completeExt(id,null);return}const n=Math.round(+v);if(isNaN(n)||n<0||n>100){toast('Escribe una nota entre 0 y 100');return}completeExt(id,n);return}
   const nk=e.target.closest('[data-nskip]');if(nk){completeExt(nk.dataset.nskip,null);return}
   if(e.target.closest('[data-ncancel]')){NOTE=null;rerender();return}
+  if(e.target.closest('[data-dlbackup]')){downloadBackup();return}
+  if(e.target.closest('[data-copylink]')){const u=location.href.split('#')[0];(navigator.clipboard?navigator.clipboard.writeText(u):Promise.reject()).then(()=>toast('Enlace copiado. Pégalo en Chrome o Safari')).catch(()=>toast(u));return}
 });
 function viewHoy(){
   indexTasks();
@@ -562,7 +600,7 @@ function viewHoy(){
   const overdue=pendingUntil(addD(td,-1));
   const wk=[];for(let i=6;i>=0;i--){const d=addD(td,-i);wk.push(d)}
   const nf=fallosIds().length;
-  let h='';
+  let h=storageBanner();
   if(!S.examConfirmed)h+=`<div class="banner"><b>¿Qué día es tu examen?</b> He puesto el ${fmtL(S.examDate)} de forma provisional. Cámbialo y el plan se reajusta solo.<div class="row"><input type="date" id="exd" value="${S.examDate}" min="2026-12-01" max="2027-03-31"><button class="btn sm" id="exok">Guardar fecha</button></div></div>`;
   h+=`<div class="top"><div><h1>${saludo()}</h1><div class="sub">${fmtL(td)} · ${p?PHASES[p.phase]:left>0?'Plan completado':'Día de examen'}</div></div></div>`;
   h+=`<div class="card hero"><div class="stamp" aria-label="Faltan ${left} días para el examen"><span>Faltan</span><b class="num">${Math.max(0,left)}</b><span>días · ${fmt(S.examDate)}</span></div>
@@ -702,12 +740,14 @@ function viewProgreso(){
   h+=`<div class="sec">Ajustes</div><div class="card stack">
    <div class="row"><label for="exd3"><b class="small">Fecha del examen</b></label><input type="date" id="exd3" value="${S.examDate}" min="2026-12-01" max="2027-03-31"><button class="btn sm soft" id="exok3">Guardar</button></div>
    <p class="sync" id="syncnote">${syncText()}</p>
+   ${STANDALONE?`<div class="row"><button class="btn sm soft" data-dlbackup="1">Descargar copia (archivo)</button><label class="btn sm ghost" for="bkfile">Cargar copia (archivo)</label><input type="file" id="bkfile" accept=".json,application/json" hidden></div>${IOS?'<p class="small muted" style="margin:0">Consejo: en Safari, toca Compartir → «Añadir a pantalla de inicio» para usarla como una app y que el progreso se conserve mejor.</p>':''}`:''}
    <div class="row"><button class="btn sm ghost" id="bk">Copiar copia de seguridad</button><button class="btn sm ghost" id="im">Restaurar copia</button><button class="btn sm ghost" id="rs" style="color:var(--ko)">Borrar progreso</button></div>
    <div id="aj"></div></div>`;
   app.innerHTML=h;
   $('#simok').onclick=()=>{const n=Math.round(+$('#simv').value);if($('#simv').value===''||isNaN(n)||n<0||n>100){toast('Escribe una nota entre 0 y 100');return}S.sims.push({d:today(),pct:n,tid:'manual-'+Date.now(),title:'Simulacro'});dayRec().acts++;checkBadges();save();toast('Nota guardada: '+n+' %');rerender()};
   $('#exok3').onclick=()=>{const v=$('#exd3').value;if(v&&v>today()){S.examDate=v;S.examConfirmed=true;rebuild();save();toast('Plan reajustado al '+fmtL(v));route()}else toast('Elige una fecha posterior a hoy')};
-  $('#bk').onclick=async()=>{try{await navigator.clipboard.writeText(JSON.stringify(S));toast('Copia de seguridad copiada. Pégala en una nota')}catch(e){$('#aj').innerHTML='<p class="small muted">Copia este texto y guárdalo:</p><textarea id="bkt" readonly>'+esc(JSON.stringify(S))+'</textarea>';$('#bkt').select()}};
+  const bf=$('#bkfile');if(bf)bf.onchange=e=>{const f=e.target.files[0];if(f)loadBackupFile(f)};
+  $('#bk').onclick=async()=>{try{await navigator.clipboard.writeText(JSON.stringify(S));S.lastBackup=today();save();toast('Copia de seguridad copiada. Pégala en una nota')}catch(e){$('#aj').innerHTML='<p class="small muted">Copia este texto y guárdalo:</p><textarea id="bkt" readonly>'+esc(JSON.stringify(S))+'</textarea>';$('#bkt').select()}};
   $('#im').onclick=()=>{$('#aj').innerHTML='<label class="small" for="imt">Pega aquí tu copia de seguridad:</label><textarea id="imt"></textarea><button class="btn sm" id="imok" style="margin-top:8px">Restaurar</button>';$('#imok').onclick=()=>{try{const x=norm(JSON.parse($('#imt').value));S=x;rebuild();save();toast('Progreso restaurado');route()}catch(e){toast('Ese texto no es una copia válida')}}};
   $('#rs').onclick=()=>{$('#aj').innerHTML='<div class="confirm">Se borrará todo tu progreso: racha, XP, resultados y fallos. No se puede deshacer.<div class="row" style="margin-top:8px"><button class="btn sm" id="rsok" style="background:var(--ko)">Sí, borrar todo</button><button class="btn sm ghost" id="rsno">Cancelar</button></div></div>';$('#rsno').onclick=()=>$('#aj').innerHTML='';$('#rsok').onclick=()=>{const ex=S.examDate,ec=S.examConfirmed;S=blank();S.examDate=ex;S.examConfirmed=ec;rebuild();save();toast('Progreso borrado');go('hoy')}};
 }
@@ -781,6 +821,8 @@ function burst(){
 }
 /* ---------- arranque ---------- */
 rebuild();indexTasks();processMissed();checkBadges();route();
+restoreFromIDB().then(()=>{if(STORE_OK)IDB.set(JSON.stringify(S))});
+window.addEventListener('pagehide',()=>{try{localStorage.setItem('opoCorreos',JSON.stringify(S))}catch(e){}});
 setTimeout(initSync,0);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){processMissed();if(!QZ)route()}else flush()});
 </script>
