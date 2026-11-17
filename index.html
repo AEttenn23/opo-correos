@@ -125,6 +125,11 @@ textarea{width:100%;min-height:90px;font-size:13px}
 .banner.warn{border-color:var(--ko);background:var(--ko-s)}
 .gbtn{display:inline-flex;align-items:center;gap:10px;background:#fff;color:#1f1f1f;border:1px solid #dadce0;border-radius:999px;padding:9px 18px;font-weight:600;font-size:15px;cursor:pointer;min-height:42px}
 .gbtn:hover{background:#f7f8f8}
+.gbtn.sm{padding:6px 12px;font-size:13.5px;min-height:34px;gap:7px;flex:none}
+.acct{display:flex;align-items:center;gap:8px;text-decoration:none;color:var(--ink);background:var(--ok-s);border-radius:999px;padding:4px 12px 4px 4px;flex:none}
+.acct img{width:28px;height:28px;border-radius:50%}
+.acct span{display:flex;flex-direction:column;line-height:1.15}
+.acct b{font-size:12.5px;color:var(--ok)}.acct small{font-size:11.5px;color:var(--mut);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .banner+.banner{margin-top:10px}
 /* plan */
 .legend{display:flex;gap:8px;flex-wrap:wrap}
@@ -378,6 +383,11 @@ function authError(e){
   toast('No se pudo iniciar sesión ('+(e.code||'error')+')');
 }
 function googleLogout(){if(!FB)return;fbFlush().finally(()=>FB.auth.signOut().then(()=>toast('Sesión cerrada. El progreso sigue en este dispositivo.')))}
+function accountChip(){
+  if(!FB)return '';
+  if(FBUSER)return `<a href="#progreso" class="acct" title="Progreso guardado en tu cuenta de Google">${FBUSER.photoURL?`<img src="${esc(FBUSER.photoURL)}" alt="" referrerpolicy="no-referrer">`:''}<span><b>Conectado</b><small>${esc((FBUSER.email||'').split('@')[0])}</small></span></a>`;
+  return `<button class="gbtn sm" data-glogin="1">${GICON}Iniciar sesión</button>`;
+}
 function paintSync(){const el=document.getElementById('syncnote');if(el)el.textContent=syncText()}
 function syncText(){if(syncMode==='cloud')return 'Progreso guardado en tu cuenta: lo verás en el móvil y en el ordenador.';
   if(syncMode==='google'&&FBUSER)return 'Progreso guardado en tu cuenta de Google ('+(FBUSER.email||'')+'). Lo verás en cualquier móvil u ordenador donde inicies sesión.';
@@ -616,7 +626,7 @@ function paintNav(cur){
   const items=NAV.map(([k,n])=>`<a href="#${k}" class="${cur===k?'on':''}" ${cur===k?'aria-current="page"':''}>${ICON[k]}<span>${n}</span></a>`).join('');
   $('#tabs').innerHTML=items;
   const lv=levelOf(S.xp);
-  $('#side').innerHTML=`<div class="brand">Oposición Correos<small>Atención al público · examen ${fmt(S.examDate)}</small></div>${items}<div class="sidefoot"><span class="pill fl num">Racha ${streak()}</span> <span class="pill num">${lv.name}</span></div>`;
+  $('#side').innerHTML=`<div class="brand">Oposición Correos<small>Atención al público · examen ${fmt(S.examDate)}</small></div>${items}<div class="sidefoot"><span class="pill fl num">Racha ${streak()}</span> <span class="pill num">${lv.name}</span>${FBUSER?'<div style="margin-top:8px" class="small">Conectado: '+esc(FBUSER.email||'')+'</div>':''}</div>`;
 }
 function route(){
   const h=location.hash.slice(1)||'hoy';
@@ -660,7 +670,7 @@ function viewHoy(){
   const nf=fallosIds().length;
   let h=storageBanner();
   if(!S.examConfirmed)h+=`<div class="banner"><b>¿Qué día es tu examen?</b> He puesto el ${fmtL(S.examDate)} de forma provisional. Cámbialo y el plan se reajusta solo.<div class="row"><input type="date" id="exd" value="${S.examDate}" min="2026-12-01" max="2027-03-31"><button class="btn sm" id="exok">Guardar fecha</button></div></div>`;
-  h+=`<div class="top"><div><h1>${saludo()}</h1><div class="sub">${fmtL(td)} · ${p?PHASES[p.phase]:left>0?'Plan completado':'Día de examen'}</div></div></div>`;
+  h+=`<div class="top"><div><h1>${saludo()}</h1><div class="sub">${fmtL(td)} · ${p?PHASES[p.phase]:left>0?'Plan completado':'Día de examen'}</div></div>${accountChip()}</div>`;
   h+=`<div class="card hero"><div class="stamp" aria-label="Faltan ${left} días para el examen"><span>Faltan</span><b class="num">${Math.max(0,left)}</b><span>días · ${fmt(S.examDate)}</span></div>
    <div><div class="kpis"><div class="kpi fl"><b class="num">${s}</b><span>Racha</span></div><div class="kpi"><b class="num">${S.freezes}</b><span>Comodines</span></div><div class="kpi"><b class="num">${S.bestStreak}</b><span>Mejor racha</span></div></div>
    <div class="lvl"><div class="row"><b>${lv.name}</b><span class="muted num">${S.xp} XP${lv.nx?' / '+lv.nx:''}</span></div><div class="bar"><i style="width:${lv.pct}%"></i></div></div></div></div>`;
